@@ -1,0 +1,148 @@
+---
+title: "Mood and Circadian Rhythm"
+output: html_document
+date: "2022-12-18"
+---
+
+### Install missing packages
+```{r}
+install.packages('lmerTest')
+```
+
+#Get and clean BodyFeelingExp data
+```{r}
+library(tidyverse)
+
+#Get FaceStroopData
+datadir<-"/work/285178/BodyFeelingExp_data"
+
+
+#Find files
+files<-list.files(datadir,pattern='^BodyFeelingExp_.+?csv',full.names=TRUE)
+
+#Prepare an empty data frame for the data (also removes old version)
+dataBFE<-data.frame()
+
+#How many datasets were there
+n_datasets_raw<-length(files)
+#Prepare a variable to monitor how many datasets we keep
+n_datasets<-0
+#Prepare a variable to monitor how many points we originally had
+n_datapoints_raw<-0
+
+#Loop to go through all files in the list
+for(iii in 1:n_datasets_raw){
+  
+  #remove old loaded file to not risk importing it multiple times
+  if(exists('data_temp')) rm(data_temp)
+  
+  #Load data
+  data_temp<-read.csv(files[iii])
+  if(dim(data_temp)[2]==31){
+    data_temp[1,6]<-data_temp[dim(data_temp)[1],6]
+    data_temp<-data_temp[1,c(6,8:27)]
+        if(length(colnames(dataBFE))==0){
+          dataBFE=data_temp
+          rm(data_temp)
+          #counter to monitor included datasets
+          n_datasets<-n_datasets+1
+        }
+        #Bind loaded data with actual data
+        else {dataBFE<-rbind(dataBFE,data_temp)
+          rm(data_temp)
+          #counter to monitor included datasets
+          n_datasets<-n_datasets+1
+        }
+    }
+}
+
+#A variable to monitor how many points we keep
+n_datapoints<-length(dataBFE[,1])
+
+```
+
+##Cleaning to make sure id's are unique 
+
+```{r}
+
+#Take first entry per participant to see how many participants there are
+uni <- dataBFE[!duplicated(dataBFE$id),]
+uni
+
+#Let's see which id's might be the same person
+
+#Collapse id's
+dataBFE[dataBFE == " Woo55"] <- "woo55"
+dataBFE[dataBFE == "Woo55"] <- "woo55"
+dataBFE[dataBFE == "dig05"] <- "dlg05"
+dataBFE[dataBFE == "hej123"] <- "hej12"
+dataBFE[dataBFE == "www111"] <- "www11"
+dataBFE[dataBFE == "www12"] <- "www11"
+dataBFE[dataBFE == "www123"] <- "www11"
+dataBFE[dataBFE == "Qwe12"] <- "qwe12"
+dataBFE[dataBFE == "POP33"] <- "pop33"
+dataBFE[dataBFE == "ESG44"] <- "esg44"
+
+#Check the remaining id's
+uni <- dataBFE[!duplicated(dataBFE$id),]
+uni
+
+#Exclude POP33 idx 252 and ESG44 idx 65 (of some reason they won't rename nor filter out)
+dataBFE <- dataBFE[-c(65, 252), ]
+
+uni <- dataBFE[!duplicated(dataBFE$id),]
+uni
+
+#Now we have 25 participants.
+
+#A variable to monitor how many points we keep
+n_datapoints2 <-length(dataBFE[,1])
+```
+
+### Additional preprocessing
+```{r}
+#Make a variable which has hour and minutes of the day as decimal variable
+dataBFE$hour2<-dataBFE$hour+(dataBFE$minute)/60
+```
+
+## Plot mood scores over time
+
+```{r}
+library(ggplot2)
+ggplot(dataBFE,aes(x=hour2,y=mood))+geom_smooth(col='darkorange')+geom_point()
+```
+
+
+
+#### Use sine and cosine waves to make 24 hour oscillation predictors for the BodyFeelingExp data
+
+```{r}
+#cycle frequency (in this case per hour) - one cycle per 24 hours
+cf=1/24
+
+#Make sine and cosine waves for each time point present in the data
+
+dataBFE$sinCirc<-sin(2*pi*cf*dataBFE$hour2)
+dataBFE$cosCirc<-cos(2*pi*cf*dataBFE$hour2)
+
+# Plot the predictors for each data point in the data
+ggplot(dataBFE, aes(x=hour2,y=sinCirc))+
+      geom_point(col='darkblue')+
+      geom_point(aes(y=cosCirc),col='darkred')+
+      ylab('sinCirc/cosCirc')
+
+```
+
+## Fitting 24 hour Oscillation model for Mood
+```{r}
+library(lmerTest)
+# Mood: Simple oscillation model
+modelBFEmoodCirc<-lmer(mood~sinCirc+cosCirc+(1|id),data=dataBFE)
+m_temp<-summary(modelBFEmoodCirc)
+m_temp
+dataBFE$CircFit<-m_temp$coefficients[2,1]*dataBFE$sinCirc+m_temp$coefficients[3,1]*dataBFE$cosCirc
+
+plot(x=dataBFE$hour2,y=dataBFE$CircFit,type='p',col='purple')
+
+ggplot(dataBFE,aes(x=hour2,y=mood))+geom_smooth(col='darkorange')+geom_line(aes(x=hour2,y=CircFit+mean(mood)),col='purple')+labs(x='Time of day (hours)', y='Negative/Positive Mood')
+```
